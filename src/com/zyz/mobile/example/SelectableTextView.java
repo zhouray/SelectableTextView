@@ -1,23 +1,23 @@
 /*
-Copyright (C) 2013 Ray Zhou
-
-JadeRead is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-JadeRead is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with JadeRead.  If not, see <http://www.gnu.org/licenses/>
-
-Author: Ray Zhou
-Date: 2013 04 26
-
-*/
+ Copyright (C) 2013 Ray Zhou
+ 
+ JadeRead is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ JadeRead is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with JadeRead.  If not, see <http://www.gnu.org/licenses/>
+ 
+ Author: Ray Zhou
+ Date: 2013 04 26
+ 
+ */
 
 package com.zyz.mobile.example;
 
@@ -48,14 +48,21 @@ public class SelectableTextView extends TextView {
 
 	private int mDefaultSelectionColor;
 
-	private SelectionInfo mSelection;
+	/**
+	 * the selection information used by the cursor
+	 */
+	private SelectionInfo mCursorSelection;
 
 
 	private final int[] mTempCoords = new int[2];
 
+
+	private OnCursorStateChangedListener mOnCursorStateChangedListener;
+
+	/**
+	 * DONT ACCESS DIRECTLY, use getSelectionController() instead
+	 */
 	private SelectionCursorController mSelectionController;
-
-
 
 	@SuppressWarnings("unused")
 	public SelectableTextView(Context context) {
@@ -77,7 +84,7 @@ public class SelectableTextView extends TextView {
 	}
 
 	private void init() {
-		mSelection = new SelectionInfo();
+		mCursorSelection = new SelectionInfo();
 
 
 		mSelectionController = new SelectionCursorController();
@@ -128,8 +135,13 @@ public class SelectableTextView extends TextView {
 			return ;
 		}
 
-		mSelection = new SelectionInfo(getText(), new BackgroundColorSpan(color), start, end);
-		mSelection.select();
+		/* My Note
+         have to create a new one each time instead of using the {@code set} method.
+         if I use set, will mess up the removeSelection function as the content of the
+         reference has changed
+		 */
+		mCursorSelection = new SelectionInfo(getText(), new BackgroundColorSpan(color), start, end);
+		mCursorSelection.select();
 		removeSelection(duration);
 	}
 
@@ -159,11 +171,11 @@ public class SelectableTextView extends TextView {
 	 * removes the current selection immediately
 	 */
 	public void removeSelection() {
-		mSelection.remove();
+		mCursorSelection.remove();
 	}
 
 	public void removeSelection(int delay) {
-		removeSelection(mSelection, delay);
+		removeSelection(mCursorSelection, delay);
 	}
 
 	/**
@@ -202,8 +214,18 @@ public class SelectableTextView extends TextView {
 	/**
 	 * @return the current selection information
 	 */
-	public SelectionInfo getSelection() {
-		return mSelection;
+	public SelectionInfo getCursorSelection() {
+		return mCursorSelection;
+	}
+
+
+	/**
+	 * set the OnCursorHiddenListner when then the cursors hide
+	 *
+	 * @param onCursorStateChangedListener the OnCursorVisibilityChangedListener
+	 */
+	public void setOnCursorStateChangedListener(OnCursorStateChangedListener onCursorStateChangedListener) {
+		mOnCursorStateChangedListener = onCursorStateChangedListener;
 	}
 
 	/**
@@ -221,22 +243,39 @@ public class SelectableTextView extends TextView {
 			final int[] coords = mTempCoords;
 			((ScrollView) this.getParent()).getLocationInWindow(coords);
 			y -= coords[1];
+            
+			/* My Note
+             getLocationInWindow(coords) for the TextView will return a negative
+             value if we scroll down as the top the TextView is beyong the top
+             of the screen.
+             
+             So maybe we could replace SrollView.getScrollY() with getWindowsInLocation(coords)
+			 */
 		}
 
 		return y;
 	}
 
 	/**
+	 * the current x position of the TextView taking into account the scroll (if it's inside a
+	 * ScrollView) and the padding of the scrollview
+	 *
 	 * @return the x position
 	 */
-	@SuppressWarnings("unused")
 	private int getScrollXInternal() {
 		int x = this.getScrollX();
 
 		// a TextView inside a ScrollView is not scrolled, so getScrollX() returns 0.
 		// We must use getScrollX() from the ScrollView instead
 		if (this.getParent() instanceof ScrollView) {
-			x += ((ScrollView) this.getParent()).getScrollX();
+			ScrollView scrollView = (ScrollView) this.getParent();
+            
+			x += scrollView.getScrollX();
+            
+			final int[] coords = mTempCoords;
+			scrollView.getLocationInWindow(coords);
+			x -= coords[0];
+			x -= scrollView.getPaddingLeft();
 		}
 		return x;
 	}
@@ -298,33 +337,33 @@ public class SelectableTextView extends TextView {
 	 * @return the character offset for the character whose position is closest to the specified
 	 *         position. Returns -1 if there is no layout.
 	 */
-	@SuppressWarnings("unused")
-	public int getOffsetFromRaw(int x, int y) {
-		if (getLayout() == null) return -1;
-
-		y -= getTotalPaddingTop();
-		// Clamp the position to inside of the view.
-		y = Math.max(0, y);
-		y = Math.min(getHeight() - getTotalPaddingBottom() - 1, y);
-		y += getScrollY();
-
-		// if the textview is inside a scrollview, the above getScrollY() will return 0
-		// even if it's scrolled. Must do getScrollY() from the ScrollView instead.
-		if (this.getParent() instanceof ScrollView) {
-			ScrollView scrollView = (ScrollView) this.getParent();
-			y += scrollView.getScrollY();
-
-			// do this to compensate for the height of the status bar
-			final int[] coords = mTempCoords;
-			scrollView.getLocationInWindow(coords);
-			y -= coords[1];
-		}
-
-		final int line = getLayout().getLineForVertical(y);
-		final int offset = getOffsetForHorizontal(line, x);
-		return offset;
-	}
-
+    //	@SuppressWarnings("unused")
+    //	public int getOffsetFromRaw(int x, int y) {
+    //		if (getLayout() == null) return -1;
+    //
+    //		y -= getTotalPaddingTop();
+    //		// Clamp the position to inside of the view.
+    //		y = Math.max(0, y);
+    //		y = Math.min(getHeight() - getTotalPaddingBottom() - 1, y);
+    //		y += getScrollY();
+    //
+    //		// if the textview is inside a scrollview, the above getScrollY() will return 0
+    //		// even if it's scrolled. Must do getScrollY() from the ScrollView instead.
+    //		if (this.getParent() instanceof ScrollView) {
+    //			ScrollView scrollView = (ScrollView) this.getParent();
+    //			y += scrollView.getScrollY();
+    //
+    //			// do this to compensate for the height of the status bar
+    //			final int[] coords = mTempCoords;
+    //			scrollView.getLocationInWindow(coords);
+    //			y -= coords[1];
+    //		}
+    //
+    //		final int line = getLayout().getLineForVertical(y);
+    //		final int offset = getOffsetForHorizontal(line, x);
+    //		return offset;
+    //	}
+    
 	////////////////////////////////////////////////
 	// copied & modified from Android source code //
 	////////////////////////////////////////////////
@@ -342,15 +381,13 @@ public class SelectableTextView extends TextView {
 		final Layout layout = getLayout();
 		if (layout == null) return -1;
 
-		y -= getTotalPaddingTop();
-		// Clamp the position to inside of the view.
-		y = Math.max(0, y);
-		y = Math.min(getHeight() - getTotalPaddingBottom() - 1, y);
+        
 		y += getScrollYInternal();
-
+		x += getScrollXInternal();
+        
 		int line = getLayout().getLineForVertical(y);
-
-		// this block is required because of how Android Layout for
+        
+		// The "HACK BLOCK"S in this function is required because of how Android Layout for
 		// TextView works - if 'offset' equals to the last character of a line, then
 		//
 		// * getLineForOffset(offset) will result the NEXT line
@@ -361,7 +398,7 @@ public class SelectableTextView extends TextView {
 		// @see Moon+ Reader/Color Note - see how it can't select the last character of a line unless you move
 		// the cursor to the beginning of the next line.
 		//
-		////////////////////////////////////////////////////////////////////////////////
+		////////////////////HACK BLOCK////////////////////////////////////////////////////
 		if (isEndOfLineOffset(previousOffset)) {
 			// we have to minus one from the offset so that the code below to find
 			// the previous line can work correctly.
@@ -382,11 +419,12 @@ public class SelectableTextView extends TextView {
 		// If new line is just before or after previous line and y position is less than
 		// hysteresisThreshold away from previous line, keep cursor on previous line.
 		if (((line == previousLine + 1) && ((y - previousLineBottom) < hysteresisThreshold)) ||
-				  ((line == previousLine - 1) && ((previousLineTop - y) < hysteresisThreshold))) {
+            ((line == previousLine - 1) && ((previousLineTop - y) < hysteresisThreshold)))
+		{
 			line = previousLine;
 		}
 
-		int offset = getOffsetForHorizontal(line, x);
+		int offset = layout.getOffsetForHorizontal(line, x);
 
 
 		// This allow the user to select the last character of a line without moving the
@@ -394,8 +432,8 @@ public class SelectableTextView extends TextView {
 		// offset of the last character of the specified line)
 		//
 		// But this function will probably get called again immediately, must decrement the offset
-		// by 1 to compensate for the change made below. (see previous block)
-		///////////////////////////////////////////////////////////////////////////////
+		// by 1 to compensate for the change made below. (see previous HACK BLOCK)
+		/////////////////////HACK BLOCK///////////////////////////////////////////////////
 		if (offset < getText().length() - 1) {
 			if (isEndOfLineOffset(offset + 1)) {
 				int left = (int) layout.getPrimaryHorizontal(offset);
@@ -431,20 +469,21 @@ public class SelectableTextView extends TextView {
 	////////////////////////////////////////////////
 	// copied & modified from Android source code //
 	////////////////////////////////////////////////
+    
+	/**
+	 * get the offset given the line and the raw x
+	 *
+	 * @param line the line
+	 * @param x    raw x
+	 * @return the offset
+	 */
 	private int getOffsetForHorizontal(int line, int x) {
 		x -= getTotalPaddingLeft();
 		// Clamp the position to inside of the view.
 		x = Math.max(0, x);
 		x = Math.min(getWidth() - getTotalPaddingRight() - 1, x);
-		x += getScrollX();
-
-		// if the textview is inside a scrollview, the above getScrollX() will return 0
-		// even if it's scrolled. Must do getScrollX() from the ScrollView instead.
-		if (this.getParent() instanceof ScrollView) {
-			ScrollView scrollView = (ScrollView) this.getParent();
-			x += scrollView.getScrollX();
-		}
-
+		x += getScrollXInternal();
+        
 		return getLayout().getOffsetForHorizontal(line, x);
 	}
 
@@ -452,10 +491,11 @@ public class SelectableTextView extends TextView {
 	 * get the (x,y) screen coordinates from the specified offset.
 	 *
 	 * @param offset   the offset
-	 * @param scroll_y the scroll distant to take away
+	 * @param scroll_x the horizontal scroll distance to take away
+	 * @param scroll_y the horizontal scroll distance to take away
 	 * @param coords   the returned x, y coordinate array, must have a length of 2
 	 */
-	private void getXY(int offset, int scroll_y, int[] coords) {
+	private void getXY(int offset, int scroll_x, int scroll_y, int[] coords) {
 		assert (coords.length >= 2);
 
 		coords[0] = coords[1] = -1;
@@ -465,7 +505,7 @@ public class SelectableTextView extends TextView {
 			int line = layout.getLineForOffset(offset);
 			int base = layout.getLineBottom(line);
 
-			coords[0] = (int) layout.getPrimaryHorizontal(offset); // x
+			coords[0] = (int) layout.getPrimaryHorizontal(offset) - scroll_x; // x
 			coords[1] = base - scroll_y; // y
 		}
 	}
@@ -475,10 +515,11 @@ public class SelectableTextView extends TextView {
 	 * end of the line, move the offset to the beginning of the next line.
 	 *
 	 * @param offset   the offset
-	 * @param scroll_y the scroll distance to take away.
+	 * @param scroll_x the horizontal scroll distance to take away
+	 * @param scroll_y the horizontal scroll distance to take away
 	 * @param coords   the returned x, y coordinate array, muust have a length of 2
 	 */
-	private void getAdjusteStartXY(int offset, int scroll_y, int[] coords) {
+	private void getAdjusteStartXY(int offset, int scroll_x, int scroll_y, int[] coords) {
 		if (offset < getText().length()) {
 			final Layout layout = getLayout();
 			if (layout != null) {
@@ -492,7 +533,7 @@ public class SelectableTextView extends TextView {
 				}
 			}
 		}
-		getXY(offset, scroll_y, coords);
+		getXY(offset, scroll_x, scroll_y, coords);
 	}
 
 	/**
@@ -501,10 +542,11 @@ public class SelectableTextView extends TextView {
 	 * the next line (which is the default behaviour for Android)
 	 *
 	 * @param offset   the offset
-	 * @param scroll_y the scroll distance to take away
+	 * @param scroll_x the horizontal scroll distance to take away
+	 * @param scroll_y the horizontal scroll distance to take away
 	 * @param coords   the returned x, y coordinate array, must have a length of 2
 	 */
-	private void getAdjustedEndXY(int offset, int scroll_y, int[] coords) {
+	private void getAdjustedEndXY(int offset, int scroll_x, int scroll_y, int[] coords) {
 		if (offset > 0) {
 			final Layout layout = getLayout();
 			if (layout != null) {
@@ -517,19 +559,20 @@ public class SelectableTextView extends TextView {
 					int prev_line = layout.getLineForOffset(offset - 1);
 					float right = layout.getLineRight(prev_line);
 					int y = layout.getLineBottom(prev_line);
-					coords[0] = (int) right;
+					coords[0] = (int) right - scroll_x;
 					coords[1] = y - scroll_y;
 					return;
 				}
 			}
 		}
-		getXY(offset, scroll_y, coords);
+		getXY(offset, scroll_x, scroll_y, coords);
 	}
 
 	public void hideCursor() {
 		mSelectionController.hide();
 	}
 
+    
 	////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////
 	/////////////////////////////INNER CLASSES//////////////////////////////////
@@ -570,8 +613,8 @@ public class SelectableTextView extends TextView {
 		public void snapToSelection() {
 
 			if (mIsShowing) {
-				int a = SelectableTextView.this.getSelection().getStart();
-				int b = SelectableTextView.this.getSelection().getEnd();
+				int a = SelectableTextView.this.getCursorSelection().getStart();
+				int b = SelectableTextView.this.getCursorSelection().getEnd();
 
 				int start = Math.min(a, b);
 				int end = Math.max(a, b);
@@ -582,15 +625,16 @@ public class SelectableTextView extends TextView {
 
 				final int[] coords = mTempCoords;
 				int scroll_y = SelectableTextView.this.getScrollYInternal();
+				int scroll_x = SelectableTextView.this.getScrollXInternal();
 
-				SelectableTextView.this.getAdjusteStartXY(start, scroll_y, coords);
+				SelectableTextView.this.getAdjusteStartXY(start, scroll_x, scroll_y, coords);
 				startHandle.pointTo(coords[0], coords[1]);
 
-				SelectableTextView.this.getAdjustedEndXY(end, scroll_y, coords);
+				SelectableTextView.this.getAdjustedEndXY(end, scroll_x, scroll_y, coords);
 				endHandle.pointTo(coords[0], coords[1]);
 			}
 		}
-
+        
 		/**
 		 * show the selection cursor at the specified offsets and select the text between the specified
 		 * offsets.
@@ -605,15 +649,20 @@ public class SelectableTextView extends TextView {
 
 			final int[] coords = mTempCoords;
 			int scroll_y = SelectableTextView.this.getScrollY();
+			int scroll_x = SelectableTextView.this.getScrollX();
 
-			SelectableTextView.this.getAdjusteStartXY(a, scroll_y, coords);
+			SelectableTextView.this.getAdjusteStartXY(a, scroll_x, scroll_y, coords);
 			mStartHandle.show(coords[0], coords[1]);
 
-			SelectableTextView.this.getAdjustedEndXY(b, scroll_y, coords);
+			SelectableTextView.this.getAdjustedEndXY(b, scroll_x, scroll_y, coords);
 			mEndHandle.show(coords[0], coords[1]);
 
 			mIsShowing = true;
 			select(a, b);
+
+			if (mOnCursorStateChangedListener != null) {
+				mOnCursorStateChangedListener.onShowCursors(SelectableTextView.this);
+		    }
 		}
 
 
@@ -626,6 +675,10 @@ public class SelectableTextView extends TextView {
 				mStartHandle.hide();
 				mEndHandle.hide();
 				mIsShowing = false;
+                
+				if (mOnCursorStateChangedListener != null) {
+					mOnCursorStateChangedListener.onHideCursors(SelectableTextView.this);
+				}
 			}
 		}
 
@@ -645,25 +698,30 @@ public class SelectableTextView extends TextView {
 			}
 
 			int old_offset =
-					  cursorHandle == mStartHandle ?
-								 SelectableTextView.this.getSelection().getStart() :
-								 SelectableTextView.this.getSelection().getEnd();
-
+            cursorHandle == mStartHandle ?
+            SelectableTextView.this.getCursorSelection().getStart() :
+            SelectableTextView.this.getCursorSelection().getEnd();
+            
 			int offset = SelectableTextView.this.getHysteresisOffset(x, y, old_offset);
 
 			if (offset != old_offset) {
 
 				if (cursorHandle == mStartHandle) {
-					SelectableTextView.this.getSelection().setStart(offset);
-				} else {
-					SelectableTextView.this.getSelection().setEnd(offset);
+					SelectableTextView.this.getCursorSelection().setStart(offset);
 				}
-				SelectableTextView.this.getSelection().select();
+				else {
+					SelectableTextView.this.getCursorSelection().setEnd(offset);
+				}
+				SelectableTextView.this.getCursorSelection().select();
 			}
-
+            
 			cursorHandle.pointTo(x, y);
+            
+			if (mOnCursorStateChangedListener != null) {
+				mOnCursorStateChangedListener.onPositionChanged(SelectableTextView.this, x, y, oldx, oldy);
+			}
 		}
-
+        
 		/**
 		 * Select the textview between start and end.
 		 * <p/>
@@ -675,13 +733,23 @@ public class SelectableTextView extends TextView {
 		private void select(int start, int end) {
 			SelectableTextView.this.setSelection(Math.min(start, end), Math.abs(end - start));
 		}
-
+        
 		@SuppressWarnings("unused")
 		public boolean isShowing() {
 			return mIsShowing;
 		}
-
-
+        
+		/**
+		 * Called when the view is detached from window. Perform house keeping task, such as stopping
+		 * Runnable thread that would otherwise keep a reference on the context, thus preventing the
+		 * activity from being recycled.
+		 */
+		@SuppressWarnings("unused")
+		public void onDetached() {
+			// don't know what to do here
+		}
+        
+        
 		@Override
 		public void onTouchModeChanged(boolean isInTouchMode) {
 			if (!isInTouchMode) {
@@ -689,116 +757,124 @@ public class SelectableTextView extends TextView {
 			}
 		}
 	}
-
-
+    
+    
 	/**
 	 * represents a single cursor
 	 */
 	private class CursorHandle extends View {
-
+        
 		/**
 		 * the {@link PopupWindow} containing the cursor drawable
 		 */
 		private final PopupWindow mContainer;
-
+        
 		/**
 		 * the drawble of the cursor
 		 */
 		private Drawable mDrawable;
-
+        
 		/**
 		 * whether the user is dragging the cursor
 		 */
 		@SuppressWarnings("unused")
 		private boolean mIsDragging;
-
+        
 		/**
 		 * the controller that's controlling the cursor
 		 */
 		private SelectionCursorController mController;
-
+        
 		/**
 		 * the height of the cursor
 		 */
 		private int mHeight;
-
+        
 		/**
 		 * the width of the cursor
 		 */
 		private int mWidth;
-
+        
 		/**
 		 * the x coordinate of the "pointer" of the cursor
 		 */
 		private int mHotspotX;
-
+        
 		/**
 		 * the y coordinate of the "pointer" of the cursor which is usually the top, so it's zero.
 		 */
 		private int mHotspotY;
-
-
+        
+        
 		/**
 		 * Adjustment to add to the Raw x, y coordinate of the touch position to get the location of where
 		 * the cursor is pointing to
 		 */
 		private int mAdjustX;
 		private int mAdjustY;
-
+        
 		private int mOldX;
 		private int mOldY;
-
+        
 		public CursorHandle(SelectionCursorController controller) {
 			super(SelectableTextView.this.getContext());
-
+            
 			mController = controller;
-
+            
 			mDrawable = getResources().getDrawable(R.drawable.cursor);
-
-			mContainer = new PopupWindow(this);
-			mContainer.setClippingEnabled(false);
-
+            
 			/* My Note
-			getIntrinsicWidth() returns the width of the drawable after it has been
-			scaled to the current device's density
-			e.g. if the drawable is a 15 x 20 image and we load the image on a Nexus 4 (which
-			has a density of 2.0), getIntrinsicWidth() shall return 15 * 2 = 30
+             At first I tried using mContainer = new PopupWindow(SelectableTextView.this.getContext())
+             and mContainer.setContentView(this) in the show() method AND FAILED to draw the
+             PopupWindow properly (e.g. PopupWindow can't contain the whole drawable, background
+             of the PopupWindow is not transparent. I think it's because calling
+             new PopupWindow(context) uses the internal's default style which messes up
+			 */
+			mContainer = new PopupWindow(this);
+			// mContainer.setSplitTouchEnabled(true);
+			mContainer.setClippingEnabled(false);
+            
+			/* My Note
+             getIntrinsicWidth() returns the width of the drawable after it has been
+             scaled to the current device's density
+             e.g. if the drawable is a 15 x 20 image and we load the image on a Nexus 4 (which
+             has a density of 2.0), getIntrinsicWidth() shall return 15 * 2 = 30
 			 */
 			mHeight = mDrawable.getIntrinsicHeight();
 			mWidth = mDrawable.getIntrinsicWidth();
-
+            
 			// the PopupWindow has an initial dimension of (0, 0)
 			// must set the width/height of the popupwindow in order for it to be drawn
 			mContainer.setWidth(mWidth);
 			mContainer.setHeight(mHeight);
-
+            
 			// this is the location of where the pointer is relative to the cursor itself
 			// if the left and right cursor are different, mHotspotX will need to be calculated
 			// differently for each cursor. Currently, I'm using the same left and right cursor
 			mHotspotX = mWidth / 2;
 			mHotspotY = 0;
-
+            
 			invalidate();
 		}
-
-
+        
+        
 		@Override
 		protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
 			setMeasuredDimension(mWidth, mHeight);
 		}
-
+        
 		@Override
 		protected void onDraw(Canvas canvas) {
 			mDrawable.setBounds(0, 0, mWidth, mHeight);
 			mDrawable.draw(canvas);
 		}
-
+        
 		@Override
-		public boolean onTouchEvent(MotionEvent event) {
-
+		public boolean /*CursorHandle::*/onTouchEvent(MotionEvent event) {
+            
 			int rawX = (int) event.getRawX();
 			int rawY = (int) event.getRawY();
-
+            
 			switch (event.getAction()) {
 				case MotionEvent.ACTION_DOWN: {
 					// calculate distance from the (x,y) of the finger to where the cursor
@@ -807,8 +883,11 @@ public class SelectableTextView extends TextView {
 					mAdjustY = mHotspotY - (int) event.getY();
 					mOldX = mAdjustX + rawX;
 					mOldY = mAdjustY + rawY;
-
+                    
 					mIsDragging = true;
+					if (SelectableTextView.this.mOnCursorStateChangedListener != null) {
+						SelectableTextView.this.mOnCursorStateChangedListener.onDragStarts(SelectableTextView.this);
+					}
 					break;
 				}
 				case MotionEvent.ACTION_UP:
@@ -821,9 +900,9 @@ public class SelectableTextView extends TextView {
 					// calculate the raw (x, y) the cursor is POINTING TO
 					int x = mAdjustX + rawX;
 					int y = mAdjustY + rawY;
-
+                    
 					mController.updatePosition(this, x, y, mOldX, mOldY);
-
+                    
 					mOldX = x;
 					mOldY = y;
 					break;
@@ -831,12 +910,12 @@ public class SelectableTextView extends TextView {
 			}
 			return true; // consume the event
 		}
-
-
+        
+        
 		public boolean isShowing() {
 			return mContainer.isShowing();
 		}
-
+        
 		/**
 		 * Show the cursor pointing to the specified point.
 		 *
@@ -846,12 +925,12 @@ public class SelectableTextView extends TextView {
 		public void show(int x, int y) {
 			final int[] coords = mTempCoords;
 			SelectableTextView.this.getLocationInWindow(coords);
-
+            
 			coords[0] += x - mHotspotX;
 			coords[1] += y - mHotspotY;
 			mContainer.showAtLocation(SelectableTextView.this, Gravity.NO_GRAVITY, coords[0], coords[1]);
 		}
-
+        
 		/**
 		 * move the cursor to point the (x,y) location on the screen.
 		 *
@@ -863,8 +942,8 @@ public class SelectableTextView extends TextView {
 				mContainer.update(x - mHotspotX, y - mHotspotY, -1, -1);
 			}
 		}
-
-
+        
+        
 		/**
 		 * hide this cursor
 		 */
@@ -872,7 +951,52 @@ public class SelectableTextView extends TextView {
 			mIsDragging = false;
 			mContainer.dismiss();
 		}
-
+        
+		@SuppressWarnings("unused")
+		public void dismiss() {
+			mContainer.dismiss();
+			onDetached();
+		}
+        
+		private void onDetached() {
+			// hide action windows
+            
+			// This is not used but kept for future reference.
+			// Since no action windows is associate with the cursor, nothing is removed.
+			// I've made the action window a task of the View using SelectableTextView instead of
+			// embedding it in here.
+		}
+        
 	}
+
+	public interface OnCursorStateChangedListener {
+		/**
+		 * What to do when the cursors is hidden from the view
+		 *
+		 * @param v the view the cursor belongs to
+		 */
+		public void onHideCursors(View v);
+
+		/**
+		 * What to do when the cursors show
+		 *
+		 * @param v the view the cursor belongs to
+		 */
+		public void onShowCursors(View v);
+
+		/**
+		 * What to do when the drag begins
+		 *
+		 * @param v the view the cursor belongs to
+		 */
+		public void onDragStarts(View v);
+
+		public void onPositionChanged(View v, int x, int y, int oldx, int oldy);
+	}
+
 }
 
+/*
+ Note for future me:
+ The "LINE" for layout uses 0 based index e.g. getLineForVertical
+ */
